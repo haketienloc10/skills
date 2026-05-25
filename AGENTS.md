@@ -66,3 +66,55 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
+## Project Notes Completion Gate
+
+For any task with implementation output, project notes are mandatory.
+
+Implementation output includes changes to:
+
+- source code
+- tests
+- config
+- scripts
+- migrations
+- generated project files
+- project behavior
+
+Before starting implementation or broad source exploration, use project notes to recall relevant context:
+
+    ./bin/pnotes brief --area <path> --limit 3
+
+If `brief` is unavailable, use:
+
+    ./bin/pnotes recall --area <path> --limit 3
+
+Before reporting a task as complete, the agent must do one of the following:
+
+1. Create a continuity note:
+
+       ./bin/pnotes add continuity ...
+
+2. Explicitly state why no note was needed.
+
+Valid skip reasons:
+
+- no code/config/test/script/behavior changed
+- task was pure Q&A or read-only
+- repository has no `./bin/pnotes` or `.project-notes/`
+- user explicitly requested no note
+
+Invalid skip reasons:
+
+- task was small
+- change was simple
+- only a few lines changed
+- final summary already explains it
+- git diff is enough
+
+Final response must include one line:
+
+    Project notes: created <path>
+
+or:
+
+    Project notes: skipped — <valid reason>
