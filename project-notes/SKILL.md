@@ -1,6 +1,6 @@
 ---
 name: project-notes
-description: Bắt buộc dùng pnotes trước khi implement, trước khi khám phá source code diện rộng, và sau khi có implementation output. Dùng pnotes để recall decisions, invariants, risks, tests, missing tests, traps, dead ends, và continuity notes của project mà không phải scan toàn bộ repository.
+description: Bắt buộc dùng pnotes trước khi implement, trước khi khám phá source code diện rộng, và như một completion gate sau mọi implementation output dù task nhỏ hay lớn. Không được báo task complete nếu chưa tạo continuity note hoặc nêu rõ lý do skip hợp lệ. Dùng pnotes để recall decisions, invariants, risks, tests, missing tests, traps, dead ends, và continuity notes của project mà không phải scan toàn bộ repository.
 ---
 
 # SKILL: project-notes
@@ -9,7 +9,7 @@ description: Bắt buộc dùng pnotes trước khi implement, trước khi khá
 
 - Tên skill: `project-notes`
 - Mục đích: dùng project-local notes để recall context liên quan trước khi sửa code, và lưu lại continuity có giá trị sau khi sửa code.
-- Tool: `./bin/pnotes` — Rust CLI binary được cài vào repo đích từ skill này.
+- Tool: `./bin/pnotes` — Rust CLI binary nằm trong repo.
 - Storage: `.project-notes/notes/*.md` — Markdown file có YAML frontmatter.
 - Source of truth: Markdown notes. CLI chỉ là lớp recall/brief/helper.
 
@@ -22,27 +22,9 @@ Skill này tồn tại để tránh agent:
 - scan source files không liên quan theo mặc định;
 - implement xong nhưng không để lại continuity hữu ích cho lần sau.
 
-## 2. Bootstrap repo đích
+## 2. Trigger bắt buộc
 
-Nếu repo đang làm việc chưa có `./bin/pnotes`, nhưng user muốn dùng `project-notes` cho repo đó, cài bằng bundled script của skill:
-
-    sh <skill-dir>/scripts/install.sh <repo-dir>
-
-Trong đó:
-
-- `<skill-dir>` là thư mục chứa skill `project-notes`;
-- `<repo-dir>` mặc định là current directory nếu bỏ trống;
-- script build Rust CLI từ `pnotes-cli/`, copy binary vào `<repo-dir>/bin/pnotes`, và tạo `<repo-dir>/.project-notes/notes/`.
-
-Sau khi cài, verify:
-
-    ./bin/pnotes guide
-
-Không tự cài vào repo đích nếu user chỉ hỏi Q&A hoặc repo đó không nên nhận thêm file local tool.
-
-## 3. Trigger bắt buộc
-
-### 3.1 Trước khi implement
+### 2.1 Trước khi implement
 
 Phải dùng skill này trước khi sửa source code cho feature, bugfix, refactor, migration, hoặc behavior change.
 
@@ -64,7 +46,7 @@ Trước khi sửa code, phải đọc brief trả về hoặc các note liên q
 
 Không scan toàn bộ `.project-notes/notes/` theo mặc định.
 
-### 3.2 Trước khi khám phá source code diện rộng
+### 2.2 Trước khi khám phá source code diện rộng
 
 Phải dùng skill này trước khi khám phá một vùng source code diện rộng.
 
@@ -87,11 +69,11 @@ Dùng kết quả để thu hẹp source files và notes cần đọc.
 
 Mục tiêu không phải tránh đọc code. Mục tiêu là tránh đọc code không liên quan và tránh khám phá lại context đã biết.
 
-### 3.3 Sau khi có implementation output
+### 2.3 Sau khi có implementation output
 
 Phải dùng skill này sau khi có implementation output.
 
-Implementation output nghĩa là có thay đổi ở source code, tests, config, scripts, migrations, hoặc behavior của project.
+Implementation output nghĩa là có thay đổi ở source code, tests, config, scripts, migrations, generated project files, hoặc behavior của project.
 
 Sau khi implement, tạo continuity note nếu công việc tạo ra bất kỳ thông tin nào sau đây:
 
@@ -115,21 +97,21 @@ Minimum note hợp lệ có thể dùng:
 - `Not run — reason: ...` nếu validation chưa chạy;
 - `See Handoff. No surprises.` cho `next_agent_hint` chỉ khi thật sự không có surprise.
 
-## 4. Khi không dùng
+## 3. Khi không dùng
 
 Không dùng skill này cho:
 
 - Q&A thuần túy, không làm việc với repo;
 - dịch thuật hoặc rewrite prose;
 - đọc một file user đưa sẵn khi không cần source exploration hoặc code change;
-- task ngoài repo không có `./bin/pnotes` hoặc `.project-notes/`, trừ khi user muốn bootstrap project-notes vào repo đó;
+- task ngoài repo không có `./bin/pnotes` hoặc `.project-notes/`;
 - thông tin nhạy cảm không nên commit vào repo.
 
 Không được skip skill chỉ vì code task nhỏ.
 
 Task nhỏ vẫn có thể tạo ra decision, risk, missing test, hoặc trap quan trọng.
 
-## 5. Command reference
+## 4. Command reference
 
 Initialize một lần nếu cần:
 
@@ -175,7 +157,7 @@ In CLI usage guide:
 
     ./bin/pnotes guide
 
-## 6. Workflow trước khi implement
+## 5. Workflow trước khi implement
 
 Trước khi sửa code:
 
@@ -201,7 +183,7 @@ Nếu không có note nào match:
 - tiếp tục source inspection bình thường;
 - sau implementation, tạo note nếu phát hiện reusable project knowledge mới.
 
-## 7. Workflow sau khi implement
+## 6. Workflow sau khi implement
 
 Sau khi code thay đổi:
 
@@ -224,7 +206,7 @@ Sau khi code thay đổi:
 
 Note phải giúp agent tiếp theo tránh rediscovery. Note không phải implementation summary.
 
-## 8. Cấu trúc note
+## 7. Cấu trúc note
 
 Mỗi note được lưu tại:
 
@@ -411,3 +393,11 @@ Một code implementation task chưa hoàn tất cho đến khi một trong các
    - user explicitly yêu cầu không tạo note.
 
 Không được dùng “task nhỏ” làm lý do skip project-notes.
+
+Final response phải include một dòng:
+
+    Project notes: created <path>
+
+hoặc:
+
+    Project notes: skipped — <valid reason>
