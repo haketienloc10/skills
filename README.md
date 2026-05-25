@@ -2,47 +2,49 @@
 
 Personal Codex skills.
 
-## Install skills
+## Cài Đặt Nhanh
 
-Run the interactive installer:
+Từ target project directory, chạy:
 
 ```sh
-./install.sh
+curl -fsSL "https://raw.githubusercontent.com/haketienloc10/skills/main/scripts/install-skills.sh?$(date +%s)" | bash
 ```
 
-Use `space` to select skills and `enter` to install them into:
+Hoặc cài vào một path cụ thể:
+
+```sh
+curl -fsSL "https://raw.githubusercontent.com/haketienloc10/skills/main/scripts/install-skills.sh?$(date +%s)" | bash -s -- --directory /path/to/project
+```
+
+Installer sẽ hỏi chọn skill:
+
+- `space`: select/deselect
+- `enter`: install
+- `up/down`: move
+
+Skills được cài vào:
 
 ```text
 <project>/.agents/skills
 ```
 
-By default `<project>` is the current directory. You can pass a target project path:
+## Requirements
 
-```sh
-./install.sh /path/to/target-project
+- `curl`
+- `tar`
+- `bash`
+- `cargo`, chỉ cần khi cài `project-notes`
+
+Khi chọn `project-notes`, installer cũng tạo:
+
+```text
+<project>/bin/pnotes
+<project>/.project-notes/notes/
 ```
-
-When `project-notes` is selected, the installer also runs its bootstrap script for the target project. This creates:
-
-- `<project>/bin/pnotes`
-- `<project>/.project-notes/notes/`
-
-## project-notes
-
-Install `project-notes` into a target repo from this checkout:
-
-```sh
-sh project-notes/scripts/install.sh /path/to/target-repo
-```
-
-This creates:
-
-- `/path/to/target-repo/bin/pnotes`
-- `/path/to/target-repo/.project-notes/notes/`
 
 Verify:
 
 ```sh
-cd /path/to/target-repo
+cd /path/to/project
 ./bin/pnotes guide
 ```
