@@ -23,8 +23,14 @@ done
 
 cursor=0
 
+if ! { exec 3</dev/tty; } 2>/dev/null; then
+  printf 'Interactive installer requires a terminal. Run this command from a TTY.\n' >&2
+  exit 1
+fi
+
 cleanup() {
   printf '\033[?25h'
+  exec 3<&- || true
 }
 trap cleanup EXIT
 
@@ -48,9 +54,9 @@ render() {
 
 read_key() {
   local key rest
-  IFS= read -rsn1 key
+  IFS= read -rsn1 -u 3 key
   if [[ $key == $'\x1b' ]]; then
-    IFS= read -rsn2 -t 0.1 rest || true
+    IFS= read -rsn2 -t 0.1 -u 3 rest || true
     key+=$rest
   fi
   printf '%s' "$key"
