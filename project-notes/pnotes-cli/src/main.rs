@@ -54,6 +54,8 @@ enum Commands {
         tag: Vec<String>,
         #[arg(long)]
         task: Option<String>,
+        #[arg(long, default_value = "3")]
+        limit: usize,
     },
 }
 
@@ -122,7 +124,7 @@ impl<'de> Deserialize<'de> for TestEntry {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct NoteFrontmatter {
     id: String,
     #[serde(rename = "type")]
@@ -264,7 +266,9 @@ fn score_note(fm: &NoteFrontmatter, filter: &RecallFilter) -> i32 {
 // ── File helpers ─────────────────────────────────────────────────────────────
 
 fn notes_dir() -> PathBuf {
-    PathBuf::from(NOTES_DIR)
+    std::env::var("PNOTES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(NOTES_DIR))
 }
 
 fn resolve_note_path(task_slug: &str, date: &str) -> PathBuf {
@@ -289,9 +293,10 @@ where
     S: Into<OsString>,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    let is_add_continuity = args
+    let args_str: Vec<String> = args.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+    let is_add_continuity = args_str
         .windows(2)
-        .any(|w| w[0] == OsString::from("add") && w[1] == OsString::from("continuity"));
+        .any(|w| w[0] == "add" && w[1] == "continuity");
     if !is_add_continuity {
         return Ok((vec![], vec![]));
     }
@@ -299,43 +304,64 @@ where
     let mut tests: Vec<TestEntry> = vec![];
     let mut missing_tests: Vec<String> = vec![];
     let mut i = 0;
-    while i < args.len() {
-        let arg = args[i].to_string_lossy();
-        match arg.as_ref() {
-            "--test-command" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or("--test-command requires a value")?
-                    .to_string_lossy()
-                    .into_owned();
-                tests.push(TestEntry {
-                    command: value,
-                    covers: vec![],
-                });
-                i += 2;
+    while i < args_str.len() {
+        let arg = &args_str[i];
+        if arg == "--test-command" {
+            let value = args_str
+                .get(i + 1)
+                .ok_or("--test-command requires a value")?
+                .clone();
+            tests.push(TestEntry {
+                command: value,
+                covers: vec![],
+            });
+            i += 2;
+        } else if arg.starts_with("--test-command=") {
+            let value = arg["--test-command=".len()..].to_string();
+            if value.is_empty() {
+                return Err("--test-command requires a value".to_string());
             }
-            "--test-covers" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or("--test-covers requires a value")?
-                    .to_string_lossy()
-                    .into_owned();
-                let latest = tests
-                    .last_mut()
-                    .ok_or("--test-covers requires a preceding --test-command")?;
-                latest.covers.push(value);
-                i += 2;
+            tests.push(TestEntry {
+                command: value,
+                covers: vec![],
+            });
+            i += 1;
+        } else if arg == "--test-covers" {
+            let value = args_str
+                .get(i + 1)
+                .ok_or("--test-covers requires a value")?
+                .clone();
+            let latest = tests
+                .last_mut()
+                .ok_or("--test-covers requires a preceding --test-command")?;
+            latest.covers.push(value);
+            i += 2;
+        } else if arg.starts_with("--test-covers=") {
+            let value = arg["--test-covers=".len()..].to_string();
+            if value.is_empty() {
+                return Err("--test-covers requires a value".to_string());
             }
-            "--missing-test" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or("--missing-test requires a value")?
-                    .to_string_lossy()
-                    .into_owned();
-                missing_tests.push(value);
-                i += 2;
+            let latest = tests
+                .last_mut()
+                .ok_or("--test-covers requires a preceding --test-command")?;
+            latest.covers.push(value);
+            i += 1;
+        } else if arg == "--missing-test" {
+            let value = args_str
+                .get(i + 1)
+                .ok_or("--missing-test requires a value")?
+                .clone();
+            missing_tests.push(value);
+            i += 2;
+        } else if arg.starts_with("--missing-test=") {
+            let value = arg["--missing-test=".len()..].to_string();
+            if value.is_empty() {
+                return Err("--missing-test requires a value".to_string());
             }
-            _ => i += 1,
+            missing_tests.push(value);
+            i += 1;
+        } else {
+            i += 1;
         }
     }
 
@@ -385,8 +411,12 @@ fn cmd_add_continuity(
     }
 
     let date = Local::now().format("%Y-%m-%d").to_string();
-    let id = format!("{date}-{task}");
     let file_path = resolve_note_path(&task, &date);
+    let id = file_path
+        .file_stem()
+        .expect("resolved note path should have file stem")
+        .to_string_lossy()
+        .to_string();
 
     let fm = NoteFrontmatter {
         id: id.clone(),
@@ -449,10 +479,6 @@ fn load_all_notes() -> Vec<(PathBuf, NoteFrontmatter)> {
         }
     }
     notes
-}
-
-fn collect_superseded_ids(notes: &[(PathBuf, NoteFrontmatter)]) -> std::collections::HashSet<String> {
-    notes.iter().flat_map(|(_, fm)| fm.supersedes.iter().cloned()).collect()
 }
 
 fn cmd_recall(areas: Vec<String>, tags: Vec<String>, task: Option<String>, limit: usize) {
@@ -530,6 +556,7 @@ fn build_brief(
     areas: Vec<String>,
     tags: Vec<String>,
     task: Option<String>,
+    limit: usize,
 ) -> String {
     // Build filter summary for the header line
     let mut filter_parts: Vec<String> = areas.clone();
@@ -545,28 +572,37 @@ fn build_brief(
         filter_parts.join(", ")
     };
 
-    // Build superseded_ids and filter
-    let superseded_ids = collect_superseded_ids(&all_notes);
-    let notes: Vec<_> = all_notes.into_iter().filter(|(_, fm)| !superseded_ids.contains(&fm.id)).collect();
-
     let filter = RecallFilter { areas: areas.clone(), tags, task };
     let has_filter = !filter.areas.is_empty() || !filter.tags.is_empty() || filter.task.is_some();
 
-    let mut scored: Vec<(i32, String, NoteFrontmatter)> = notes
+    // 1. Score & filter notes using existing brief criteria
+    let scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = all_notes
         .into_iter()
-        .map(|(_, fm)| {
+        .map(|(path, fm)| {
             let s = if has_filter { score_note(&fm, &filter) } else { 0 };
             let date = fm.created_at.clone();
-            (s, date, fm)
+            (s, date, path, fm)
         })
-        .filter(|(s, _, _)| !has_filter || *s > 0)
+        .filter(|(s, _, _, _)| !has_filter || *s > 0)
+        .collect();
+
+    // 2. Collect supersedes from matched notes only
+    let superseded_by_matched: std::collections::HashSet<String> = scored
+        .iter()
+        .flat_map(|(_, _, _, fm)| fm.supersedes.iter().cloned())
+        .collect();
+
+    // 3. Remove matched notes whose id is in that matched-superseded set
+    let mut current: Vec<(i32, String, PathBuf, NoteFrontmatter)> = scored
+        .into_iter()
+        .filter(|(_, _, _, fm)| !superseded_by_matched.contains(&fm.id))
         .collect();
 
     let mut out = String::new();
     out.push_str("=== Change Safety Brief ===\n");
     out.push_str(&format!("area: {filter_summary}\n"));
 
-    if scored.is_empty() {
+    if current.is_empty() {
         let area_str = areas.first().map(String::as_str).unwrap_or(&filter_summary);
         out.push_str("\nNo project memory found for this area.\n");
         out.push_str(&format!("Run 'pnotes recall --area {area_str}' to explore related notes,\n"));
@@ -575,9 +611,9 @@ fn build_brief(
         return out;
     }
 
-    // Sort: score DESC, then created_at DESC; take top 3
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-    let top: Vec<_> = scored.into_iter().take(3).map(|(_, _, fm)| fm).collect();
+    // Sort: score DESC, then created_at DESC; take top `limit`
+    current.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    let top: Vec<_> = current.into_iter().take(limit).map(|(_, _, path, fm)| (path, fm)).collect();
 
     out.push_str(&format!("notes: {} matched\n\n", top.len()));
 
@@ -590,7 +626,7 @@ fn build_brief(
     for (name, getter) in sections {
         out.push_str(&format!("{name}\n"));
         let mut has_items = false;
-        for fm in &top {
+        for (_, fm) in &top {
             for item in getter(fm) {
                 out.push_str(&format!("- {item} (from: {}, {})\n", fm.id, fm.created_at));
                 has_items = true;
@@ -604,7 +640,7 @@ fn build_brief(
 
     out.push_str("TESTS\n");
     let mut has_tests = false;
-    for fm in &top {
+    for (_, fm) in &top {
         for test in &fm.tests {
             if test.covers.is_empty() {
                 out.push_str(&format!(
@@ -630,7 +666,7 @@ fn build_brief(
 
     out.push_str("MISSING TESTS\n");
     let mut has_missing_tests = false;
-    for fm in &top {
+    for (_, fm) in &top {
         for item in &fm.missing_tests {
             out.push_str(&format!("- {item} (from: {}, {})\n", fm.id, fm.created_at));
             has_missing_tests = true;
@@ -641,12 +677,25 @@ fn build_brief(
     }
     out.push('\n');
 
+    out.push_str("RECENT CONTINUITY NOTES\n");
+    if top.is_empty() {
+        out.push_str("(none)\n");
+    } else {
+        for (path, fm) in &top {
+            out.push_str(&format!(
+                "- {}\n  signal: {}\n",
+                path.display(),
+                fm.signal
+            ));
+        }
+    }
+
     out
 }
 
-fn cmd_brief(areas: Vec<String>, tags: Vec<String>, task: Option<String>) {
+fn cmd_brief(areas: Vec<String>, tags: Vec<String>, task: Option<String>, limit: usize) {
     let notes = load_all_notes();
-    let output = build_brief(notes, areas, tags, task);
+    let output = build_brief(notes, areas, tags, task, limit);
     print!("{output}");
 }
 
@@ -727,6 +776,9 @@ DECISION TREE
 
 fn main() {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
+    // Clap can collect repeatable values but does not preserve the grouping we need
+    // for Option A. We parse raw args so each --test-covers attaches to the nearest
+    // preceding --test-command.
     let (tests, missing_tests) = match parse_test_metadata_from_args(raw_args.iter().cloned()) {
         Ok(metadata) => metadata,
         Err(e) => {
@@ -773,7 +825,7 @@ fn main() {
         } => cmd_recall(area, tag, task, limit),
         Commands::Show { id } => cmd_show(&id),
         Commands::Guide => cmd_guide(),
-        Commands::Brief { area, tag, task } => cmd_brief(area, tag, task),
+        Commands::Brief { area, tag, task, limit } => cmd_brief(area, tag, task, limit),
     }
 }
 
@@ -903,7 +955,7 @@ id: [bad yaml
 
     #[test]
     fn test_brief_empty() {
-        let out = build_brief(vec![], vec!["src/no-such-area".to_string()], vec![], None);
+        let out = build_brief(vec![], vec!["src/no-such-area".to_string()], vec![], None, 3);
         assert!(out.contains("No project memory found for this area."));
         assert!(out.contains("area: src/no-such-area"));
     }
@@ -921,7 +973,7 @@ id: [bad yaml
             (PathBuf::from("note-a.md"), note_a),
             (PathBuf::from("note-b.md"), note_b),
         ];
-        let out = build_brief(notes, vec!["src/foo".to_string()], vec![], None);
+        let out = build_brief(notes, vec!["src/foo".to_string()], vec![], None, 3);
         assert!(!out.contains("Decision from A"), "superseded note-a should be excluded");
         assert!(out.contains("Decision from B"));
     }
@@ -940,7 +992,7 @@ id: [bad yaml
             (PathBuf::from("note-a.md"), note_a),
             (PathBuf::from("note-b.md"), note_b),
         ];
-        let out = build_brief(notes, vec!["src/foo".to_string()], vec![], None);
+        let out = build_brief(notes, vec!["src/foo".to_string()], vec![], None, 3);
         assert!(out.contains("Decision A"));
         assert!(out.contains("Decision B"));
         assert!(out.contains("from: 2026-05-25-note-a, 2026-05-25"));
@@ -964,7 +1016,7 @@ areas:
         assert!(fm.decisions.is_empty());
         assert!(fm.invariants.is_empty());
 
-        let out = build_brief(wrap(fm), vec!["src/foo".to_string()], vec![], None);
+        let out = build_brief(wrap(fm), vec!["src/foo".to_string()], vec![], None, 3);
         assert!(out.contains("(none)"), "empty sections should show (none)");
     }
 
@@ -1144,11 +1196,199 @@ areas:
         }];
         note.missing_tests = vec!["No E2E SIGTERM test.".to_string()];
 
-        let out = build_brief(wrap(note), vec!["src/session".to_string()], vec![], None);
+        let out = build_brief(wrap(note), vec!["src/session".to_string()], vec![], None, 3);
 
         assert!(out.contains("TESTS"));
         assert!(out.contains("cargo test covers: session lifecycle; shutdown path"));
         assert!(out.contains("MISSING TESTS"));
         assert!(out.contains("No E2E SIGTERM test."));
+    }
+
+    #[test]
+    fn test_brief_supersedes_only_excludes_notes_superseded_by_matched_notes() {
+        let mut old_backend = make_fm("old-backend", vec!["backend/src/services"], vec![], "old backend");
+        old_backend.id = "old-backend".to_string();
+        old_backend.decisions = vec!["Old backend decision".to_string()];
+
+        let mut new_frontend = make_fm("new-frontend", vec!["frontend/src"], vec![], "new frontend");
+        new_frontend.id = "new-frontend".to_string();
+        new_frontend.supersedes = vec!["old-backend".to_string()];
+        new_frontend.decisions = vec!["Frontend replacement".to_string()];
+
+        let notes = vec![
+            (PathBuf::from("old_backend.md"), old_backend),
+            (PathBuf::from("new_frontend.md"), new_frontend),
+        ];
+
+        let out = build_brief(notes.clone(), vec!["backend/src/services".to_string()], vec![], None, 3);
+        assert!(out.contains("Old backend decision"), "Should include Old backend decision because new-frontend did not match the brief query");
+
+        let mut new_backend = make_fm("new-backend", vec!["backend/src/services"], vec![], "new backend");
+        new_backend.id = "new-backend".to_string();
+        new_backend.supersedes = vec!["old-backend".to_string()];
+        new_backend.decisions = vec!["New backend decision".to_string()];
+
+        let mut notes_updated = notes;
+        notes_updated.push((PathBuf::from("new_backend.md"), new_backend));
+
+        let out2 = build_brief(notes_updated, vec!["backend/src/services".to_string()], vec![], None, 3);
+        assert!(out2.contains("New backend decision"));
+        assert!(!out2.contains("Old backend decision"), "Should exclude Old backend decision because new-backend matches the brief query and supersedes it");
+    }
+
+    #[test]
+    fn test_brief_respects_limit() {
+        let mut note_a = make_fm("note-a", vec!["src/foo"], vec![], "signal a");
+        note_a.id = "2026-05-25-note-a".to_string();
+        note_a.decisions = vec!["Decision A".to_string()];
+        note_a.created_at = "2026-05-25".to_string();
+
+        let mut note_b = make_fm("note-b", vec!["src/foo"], vec![], "signal b");
+        note_b.id = "2026-05-24-note-b".to_string();
+        note_b.decisions = vec!["Decision B".to_string()];
+        note_b.created_at = "2026-05-24".to_string();
+
+        let notes = vec![
+            (PathBuf::from("note-a.md"), note_a),
+            (PathBuf::from("note-b.md"), note_b),
+        ];
+
+        let out = build_brief(notes, vec!["src/foo".to_string()], vec![], None, 1);
+        assert!(out.contains("Decision A"));
+        assert!(!out.contains("Decision B"));
+    }
+
+    #[test]
+    fn test_parse_test_metadata_supports_equals_syntax_for_test_command() {
+        let (tests, _) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-command=cargo test",
+        ])
+        .expect("metadata should parse");
+
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].command, "cargo test");
+    }
+
+    #[test]
+    fn test_parse_test_metadata_supports_equals_syntax_for_test_covers() {
+        let (tests, _) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-command",
+            "cargo test",
+            "--test-covers=behavior A",
+            "--test-covers=behavior B",
+        ])
+        .expect("metadata should parse");
+
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].covers, vec!["behavior A".to_string(), "behavior B".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_test_metadata_supports_equals_syntax_for_missing_test() {
+        let (_, missing) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--missing-test=gap A",
+        ])
+        .expect("metadata should parse");
+
+        assert_eq!(missing, vec!["gap A".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_test_metadata_errors_when_equals_test_covers_has_no_command() {
+        let result = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-covers=orphan",
+        ]);
+
+        assert_eq!(
+            result.expect_err("orphan should fail"),
+            "--test-covers requires a preceding --test-command"
+        );
+    }
+
+    #[test]
+    fn test_add_continuity_uses_resolved_filename_as_id_when_collision_occurs() {
+        let test_dir = std::env::temp_dir().join(format!("pnotes-test-collision-{}", std::process::id()));
+        if test_dir.exists() {
+            std::fs::remove_dir_all(&test_dir).unwrap();
+        }
+        std::fs::create_dir_all(&test_dir).unwrap();
+        std::env::set_var("PNOTES_DIR", &test_dir);
+
+        let task = "collision-task".to_string();
+        let signal = "first signal".to_string();
+        let date = Local::now().format("%Y-%m-%d").to_string();
+
+        cmd_add_continuity(
+            Some(task.clone()),
+            Some(signal.clone()),
+            vec![],
+            vec![],
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
+
+        let first_file = test_dir.join(format!("{date}-{task}.md"));
+        assert!(first_file.exists());
+        let first_content = fs::read_to_string(&first_file).unwrap();
+        let first_fm = parse_frontmatter(&first_content).unwrap();
+        assert_eq!(first_fm.id, format!("{date}-{task}"));
+
+        cmd_add_continuity(
+            Some(task.clone()),
+            Some("second signal".to_string()),
+            vec![],
+            vec![],
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
+
+        let second_file = test_dir.join(format!("{date}-{task}-2.md"));
+        assert!(second_file.exists());
+        let second_content = fs::read_to_string(&second_file).unwrap();
+        let second_fm = parse_frontmatter(&second_content).unwrap();
+        assert_eq!(second_fm.id, format!("{date}-{task}-2"));
+
+        std::fs::remove_dir_all(&test_dir).unwrap();
+        std::env::remove_var("PNOTES_DIR");
+    }
+
+    #[test]
+    fn test_brief_prints_recent_continuity_notes() {
+        let mut note = make_fm("test-recent", vec!["src/session"], vec![], "My special signal message");
+        note.id = "2026-05-26-test-recent".to_string();
+
+        let out = build_brief(
+            vec![(PathBuf::from(".project-notes/notes/2026-05-26-test-recent.md"), note)],
+            vec!["src/session".to_string()],
+            vec![],
+            None,
+            3,
+        );
+
+        assert!(out.contains("RECENT CONTINUITY NOTES"));
+        assert!(out.contains(".project-notes/notes/2026-05-26-test-recent.md"));
+        assert!(out.contains("signal: My special signal message"));
     }
 }
