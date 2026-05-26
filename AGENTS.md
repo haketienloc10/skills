@@ -84,7 +84,7 @@ Before starting implementation or broad source exploration, use project notes to
 
     ./bin/pnotes brief --area <path> --limit 3
 
-If `brief` is unavailable, use:
+If `brief` is unavailable or returns no useful context, use:
 
     ./bin/pnotes recall --area <path> --limit 3
 
@@ -95,6 +95,17 @@ Before reporting a task as complete, the agent must do one of the following:
        ./bin/pnotes add continuity ...
 
 2. Explicitly state why no note was needed.
+
+When a continuity note is created, inspect the generated file before final response.
+
+The note must be readable multiline Markdown and should include high-signal frontmatter when applicable:
+
+- `decisions`
+- `invariants`
+- `risks`
+- `tests`
+- `missing_tests`
+- `supersedes`
 
 Valid skip reasons:
 
@@ -110,6 +121,7 @@ Invalid skip reasons:
 - only a few lines changed
 - final summary already explains it
 - git diff is enough
+- generated note was created but not inspected
 
 Final response must include one line:
 
