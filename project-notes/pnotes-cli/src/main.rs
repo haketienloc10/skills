@@ -1,6 +1,7 @@
 use chrono::Local;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
@@ -78,10 +79,48 @@ enum NoteType {
         invariant: Vec<String>,
         #[arg(long)]
         risk: Vec<String>,
+        #[arg(long)]
+        test_command: Vec<String>,
+        #[arg(long)]
+        test_covers: Vec<String>,
+        #[arg(long)]
+        missing_test: Vec<String>,
     },
 }
 
 // ── Note schema ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum TestEntryValue {
+    Structured {
+        command: String,
+        #[serde(default)]
+        covers: Vec<String>,
+    },
+    Legacy(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct TestEntry {
+    command: String,
+    covers: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for TestEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match TestEntryValue::deserialize(deserializer)? {
+            TestEntryValue::Structured { command, covers } => Ok(TestEntry { command, covers }),
+            TestEntryValue::Legacy(command) => Ok(TestEntry {
+                command,
+                covers: vec![],
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct NoteFrontmatter {
@@ -110,7 +149,7 @@ struct NoteFrontmatter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     risks: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    tests: Vec<String>,
+    tests: Vec<TestEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     missing_tests: Vec<String>,
 }
@@ -244,6 +283,65 @@ fn resolve_note_path(task_slug: &str, date: &str) -> PathBuf {
     }
 }
 
+fn parse_test_metadata_from_args<I, S>(args: I) -> Result<(Vec<TestEntry>, Vec<String>), String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let is_add_continuity = args
+        .windows(2)
+        .any(|w| w[0] == OsString::from("add") && w[1] == OsString::from("continuity"));
+    if !is_add_continuity {
+        return Ok((vec![], vec![]));
+    }
+
+    let mut tests: Vec<TestEntry> = vec![];
+    let mut missing_tests: Vec<String> = vec![];
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].to_string_lossy();
+        match arg.as_ref() {
+            "--test-command" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or("--test-command requires a value")?
+                    .to_string_lossy()
+                    .into_owned();
+                tests.push(TestEntry {
+                    command: value,
+                    covers: vec![],
+                });
+                i += 2;
+            }
+            "--test-covers" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or("--test-covers requires a value")?
+                    .to_string_lossy()
+                    .into_owned();
+                let latest = tests
+                    .last_mut()
+                    .ok_or("--test-covers requires a preceding --test-command")?;
+                latest.covers.push(value);
+                i += 2;
+            }
+            "--missing-test" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or("--missing-test requires a value")?
+                    .to_string_lossy()
+                    .into_owned();
+                missing_tests.push(value);
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+
+    Ok((tests, missing_tests))
+}
+
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 fn cmd_init() {
@@ -266,6 +364,8 @@ fn cmd_add_continuity(
     decisions: Vec<String>,
     invariants: Vec<String>,
     risks: Vec<String>,
+    tests: Vec<TestEntry>,
+    missing_tests: Vec<String>,
 ) {
     // Validate required fields
     match (&task, &signal) {
@@ -303,8 +403,8 @@ fn cmd_add_continuity(
         decisions,
         invariants,
         risks,
-        tests: vec![],
-        missing_tests: vec![],
+        tests,
+        missing_tests,
     };
 
     let yaml = serde_yaml::to_string(&fm).expect("Failed to serialize frontmatter");
@@ -485,8 +585,6 @@ fn build_brief(
         ("DECISIONS", |fm| &fm.decisions),
         ("INVARIANTS", |fm| &fm.invariants),
         ("RISKS", |fm| &fm.risks),
-        ("TESTS", |fm| &fm.tests),
-        ("MISSING TESTS", |fm| &fm.missing_tests),
     ];
 
     for (name, getter) in sections {
@@ -503,6 +601,45 @@ fn build_brief(
         }
         out.push('\n');
     }
+
+    out.push_str("TESTS\n");
+    let mut has_tests = false;
+    for fm in &top {
+        for test in &fm.tests {
+            if test.covers.is_empty() {
+                out.push_str(&format!(
+                    "- {} (from: {}, {})\n",
+                    test.command, fm.id, fm.created_at
+                ));
+            } else {
+                out.push_str(&format!(
+                    "- {} covers: {} (from: {}, {})\n",
+                    test.command,
+                    test.covers.join("; "),
+                    fm.id,
+                    fm.created_at
+                ));
+            }
+            has_tests = true;
+        }
+    }
+    if !has_tests {
+        out.push_str("(none)\n");
+    }
+    out.push('\n');
+
+    out.push_str("MISSING TESTS\n");
+    let mut has_missing_tests = false;
+    for fm in &top {
+        for item in &fm.missing_tests {
+            out.push_str(&format!("- {item} (from: {}, {})\n", fm.id, fm.created_at));
+            has_missing_tests = true;
+        }
+    }
+    if !has_missing_tests {
+        out.push_str("(none)\n");
+    }
+    out.push('\n');
 
     out
 }
@@ -546,6 +683,12 @@ pnotes add continuity --task <slug> --signal "<text>" [options]
       --tag <tag>       Tag for filtering (repeatable)
       --handoff <path>  Relative path to handoff document
       --run <id>        Run/session identifier
+      --test-command <command>
+                       Test command that validates this note (repeatable)
+      --test-covers <behavior>
+                       Behavior covered by nearest preceding --test-command (repeatable)
+      --missing-test <text>
+                       Missing coverage to record (repeatable)
 
 pnotes recall [options]
     Scan notes and return top matches. Default limit: 3.
@@ -583,13 +726,51 @@ DECISION TREE
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let cli = Cli::parse();
+    let raw_args: Vec<OsString> = std::env::args_os().collect();
+    let (tests, missing_tests) = match parse_test_metadata_from_args(raw_args.iter().cloned()) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
+    let cli = Cli::parse_from(raw_args);
     match cli.command {
         Commands::Init => cmd_init(),
-        Commands::Add {
-            note_type: NoteType::Continuity { task, signal, area, tag, handoff, run, decision, invariant, risk },
-        } => cmd_add_continuity(task, signal, area, tag, handoff, run, decision, invariant, risk),
-        Commands::Recall { area, tag, task, limit } => cmd_recall(area, tag, task, limit),
+        Commands::Add { note_type } => match note_type {
+            NoteType::Continuity {
+                task,
+                signal,
+                area,
+                tag,
+                handoff,
+                run,
+                decision,
+                invariant,
+                risk,
+                test_command: _,
+                test_covers: _,
+                missing_test: _,
+            } => cmd_add_continuity(
+                task,
+                signal,
+                area,
+                tag,
+                handoff,
+                run,
+                decision,
+                invariant,
+                risk,
+                tests,
+                missing_tests,
+            ),
+        },
+        Commands::Recall {
+            area,
+            tag,
+            task,
+            limit,
+        } => cmd_recall(area, tag, task, limit),
         Commands::Show { id } => cmd_show(&id),
         Commands::Guide => cmd_guide(),
         Commands::Brief { area, tag, task } => cmd_brief(area, tag, task),
@@ -814,5 +995,160 @@ areas:
         assert_eq!(parsed.decisions, vec!["D1"]);
         assert_eq!(parsed.invariants, vec!["I1"]);
         assert_eq!(parsed.risks, vec!["R1"]);
+    }
+
+    #[test]
+    fn test_parse_one_test_command_with_multiple_covers() {
+        let (tests, missing_tests) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-command",
+            "cargo test",
+            "--test-covers",
+            "stores exit_code",
+            "--test-covers",
+            "closes session",
+        ])
+        .expect("metadata should parse");
+
+        assert!(missing_tests.is_empty());
+        assert_eq!(
+            tests,
+            vec![TestEntry {
+                command: "cargo test".to_string(),
+                covers: vec!["stores exit_code".to_string(), "closes session".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_parse_multiple_test_command_groups() {
+        let (tests, _) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-command",
+            "cargo test",
+            "--test-covers",
+            "session lifecycle",
+            "--test-command",
+            "cargo test flush_running_tasks_updates_db",
+            "--test-covers",
+            "shutdown update path",
+        ])
+        .expect("metadata should parse");
+
+        assert_eq!(tests.len(), 2);
+        assert_eq!(tests[0].command, "cargo test");
+        assert_eq!(tests[0].covers, vec!["session lifecycle"]);
+        assert_eq!(
+            tests[1].command,
+            "cargo test flush_running_tasks_updates_db"
+        );
+        assert_eq!(tests[1].covers, vec!["shutdown update path"]);
+    }
+
+    #[test]
+    fn test_parse_repeatable_missing_tests() {
+        let (_, missing_tests) = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--missing-test",
+            "No E2E SIGTERM test.",
+            "--missing-test",
+            "No restart recovery test.",
+        ])
+        .expect("metadata should parse");
+
+        assert_eq!(
+            missing_tests,
+            vec!["No E2E SIGTERM test.", "No restart recovery test."]
+        );
+    }
+
+    #[test]
+    fn test_parse_test_covers_requires_preceding_command() {
+        let result = parse_test_metadata_from_args([
+            "pnotes",
+            "add",
+            "continuity",
+            "--test-covers",
+            "orphan coverage",
+        ]);
+
+        assert_eq!(
+            result.expect_err("orphan coverage should fail"),
+            "--test-covers requires a preceding --test-command"
+        );
+    }
+
+    #[test]
+    fn test_frontmatter_serializes_tests_and_missing_tests() {
+        let fm = NoteFrontmatter {
+            id: "2026-05-25-test-metadata".to_string(),
+            note_type: "continuity".to_string(),
+            task: "test-metadata".to_string(),
+            created_at: "2026-05-25".to_string(),
+            signal: "test metadata signal".to_string(),
+            run: None,
+            handoff: None,
+            areas: vec![],
+            tags: vec![],
+            read_when: vec![],
+            supersedes: vec![],
+            decisions: vec![],
+            invariants: vec![],
+            risks: vec![],
+            tests: vec![
+                TestEntry {
+                    command: "cargo test".to_string(),
+                    covers: vec![
+                        "subprocess exit detection stores exit_code and closes session".to_string(),
+                        "cancel endpoint transitions session safely".to_string(),
+                    ],
+                },
+                TestEntry {
+                    command: "cargo test flush_running_tasks_updates_db".to_string(),
+                    covers: vec!["graceful shutdown SQL update path".to_string()],
+                },
+            ],
+            missing_tests: vec!["No E2E test for SIGTERM graceful shutdown.".to_string()],
+        };
+
+        let yaml = serde_yaml::to_string(&fm).expect("serialize ok");
+
+        assert!(yaml.contains("tests:"));
+        assert!(yaml.contains("- command: cargo test"));
+        assert!(yaml.contains("- subprocess exit detection stores exit_code and closes session"));
+        assert!(yaml.contains("- command: cargo test flush_running_tasks_updates_db"));
+        assert!(yaml.contains("missing_tests:"));
+        assert!(yaml.contains("- No E2E test for SIGTERM graceful shutdown."));
+
+        let content = format!("---\n{yaml}---\n");
+        let parsed = parse_frontmatter(&content).expect("parse ok");
+        assert_eq!(parsed.tests.len(), 2);
+        assert_eq!(
+            parsed.missing_tests,
+            vec!["No E2E test for SIGTERM graceful shutdown."]
+        );
+    }
+
+    #[test]
+    fn test_brief_aggregates_tests_and_missing_tests() {
+        let mut note = make_fm("test-metadata", vec!["src/session"], vec![], "signal");
+        note.tests = vec![TestEntry {
+            command: "cargo test".to_string(),
+            covers: vec!["session lifecycle".to_string(), "shutdown path".to_string()],
+        }];
+        note.missing_tests = vec!["No E2E SIGTERM test.".to_string()];
+
+        let out = build_brief(wrap(note), vec!["src/session".to_string()], vec![], None);
+
+        assert!(out.contains("TESTS"));
+        assert!(out.contains("cargo test covers: session lifecycle; shutdown path"));
+        assert!(out.contains("MISSING TESTS"));
+        assert!(out.contains("No E2E SIGTERM test."));
     }
 }
