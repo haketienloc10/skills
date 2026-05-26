@@ -263,6 +263,49 @@ fn score_note(fm: &NoteFrontmatter, filter: &RecallFilter) -> i32 {
     score
 }
 
+fn score_and_filter_notes(
+    notes: Vec<(PathBuf, NoteFrontmatter)>,
+    filter: &RecallFilter,
+) -> Vec<(i32, String, PathBuf, NoteFrontmatter)> {
+    let has_filter = !filter.areas.is_empty() || !filter.tags.is_empty() || filter.task.is_some();
+
+    // Map and filter notes matching the query/filter
+    let mut scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = notes
+        .into_iter()
+        .map(|(path, fm)| {
+            let s = if has_filter {
+                score_note(&fm, filter)
+            } else {
+                0 // recency only
+            };
+            let date = fm.created_at.clone();
+            (s, date, path, fm)
+        })
+        .filter(|(score, _, _, _)| !has_filter || *score > 0)
+        .collect();
+
+    if scored.is_empty() {
+        return vec![];
+    }
+
+    // Sort: score DESC, then created_at DESC
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    // Recency boost: newest gets +1 (applied after initial sort to break ties)
+    // Re-sort with recency boost included
+    let max_date = scored.iter().map(|(_, d, _, _)| d.clone()).max().unwrap_or_default();
+    let mut scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = scored
+        .into_iter()
+        .map(|(s, d, p, fm)| {
+            let boost = if d == max_date { 1 } else { 0 };
+            (s + boost, d, p, fm)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    scored
+}
+
 // ── File helpers ─────────────────────────────────────────────────────────────
 
 fn notes_dir() -> PathBuf {
@@ -489,46 +532,17 @@ fn cmd_recall(areas: Vec<String>, tags: Vec<String>, task: Option<String>, limit
     }
 
     let filter = RecallFilter {
-        areas: areas.clone(),
-        tags: tags.clone(),
-        task: task.clone(),
+        areas,
+        tags,
+        task,
     };
-    let has_filter = !areas.is_empty() || !tags.is_empty() || task.is_some();
 
-    // (score, created_at, path, fm)
-    let mut scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = notes
-        .into_iter()
-        .map(|(path, fm)| {
-            let s = if has_filter {
-                score_note(&fm, &filter)
-            } else {
-                0 // recency only
-            };
-            let date = fm.created_at.clone();
-            (s, date, path, fm)
-        })
-        .filter(|(score, _, _, _)| !has_filter || *score > 0)
-        .collect();
+    let scored = score_and_filter_notes(notes, &filter);
 
     if scored.is_empty() {
         println!("No notes found");
         return;
     }
-
-    // Sort: score DESC, then created_at DESC
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-    // Recency boost: newest gets +1 (applied after initial sort to break ties)
-    // Re-sort with recency boost included
-    let max_date = scored.iter().map(|(_, d, _, _)| d.clone()).max().unwrap_or_default();
-    let mut scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = scored
-        .into_iter()
-        .map(|(s, d, p, fm)| {
-            let boost = if d == max_date { 1 } else { 0 };
-            (s + boost, d, p, fm)
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
 
     for (_, _, _, fm) in scored.into_iter().take(limit) {
         let areas_str = if fm.areas.is_empty() {
@@ -573,18 +587,9 @@ fn build_brief(
     };
 
     let filter = RecallFilter { areas: areas.clone(), tags, task };
-    let has_filter = !filter.areas.is_empty() || !filter.tags.is_empty() || filter.task.is_some();
 
-    // 1. Score & filter notes using existing brief criteria
-    let scored: Vec<(i32, String, PathBuf, NoteFrontmatter)> = all_notes
-        .into_iter()
-        .map(|(path, fm)| {
-            let s = if has_filter { score_note(&fm, &filter) } else { 0 };
-            let date = fm.created_at.clone();
-            (s, date, path, fm)
-        })
-        .filter(|(s, _, _, _)| !has_filter || *s > 0)
-        .collect();
+    // 1. Score & filter notes using shared helper (which applies recency boost)
+    let scored = score_and_filter_notes(all_notes, &filter);
 
     // 2. Collect supersedes from matched notes only
     let superseded_by_matched: std::collections::HashSet<String> = scored
@@ -709,67 +714,51 @@ fn cmd_show(id: &str) {
     print!("{content}");
 }
 
-fn cmd_guide() {
-    println!(
-        r#"pnotes — project-level execution notes
-======================================
+fn guide_text() -> &'static str {
+    r#"Project Notes Usage Guide for LLMs
+==================================
 
-WORKFLOW
---------
-1. At session start:  pnotes recall [--area <path>] [--task <slug>]
-2. Before finishing:  pnotes add continuity --task <slug> --signal "<summary>" [--area <path>]...
-3. Next session:      pnotes recall --task <slug>   (pick up where you left off)
+Purpose:
+- Use project-local notes to avoid rediscovering decisions, invariants, risks, tests, missing tests, traps, and dead ends.
+- Markdown notes are source of truth. The CLI is a recall/brief helper.
 
-COMMANDS
---------
-pnotes init
-    Create .project-notes/notes/ directory. Safe to run multiple times.
+Before implementation or broad source exploration:
+1. Identify the target area, task, or tag.
+2. Prefer:
+   pnotes brief --area <area> --limit 3
+3. If brief is unavailable or empty, fallback to:
+   pnotes recall --area <area> --limit 3
+4. Read only returned notes that are relevant.
+5. Do not scan all .project-notes/notes by default.
 
-pnotes add continuity --task <slug> --signal "<text>" [options]
-    Create a continuity note. Required: --task, --signal.
-    Options:
-      --area <path>     Area of code affected (repeatable)
-      --tag <tag>       Tag for filtering (repeatable)
-      --handoff <path>  Relative path to handoff document
-      --run <id>        Run/session identifier
-      --test-command <command>
-                       Test command that validates this note (repeatable)
-      --test-covers <behavior>
-                       Behavior covered by nearest preceding --test-command (repeatable)
-      --missing-test <text>
-                       Missing coverage to record (repeatable)
+Commands:
+  pnotes init
+    Create .project-notes structure.
 
-pnotes recall [options]
-    Scan notes and return top matches. Default limit: 3.
-    Options:
-      --area <path>     Filter by area (exact +5, prefix +4)
-      --tag <tag>       Filter by tag (+2 each)
-      --task <slug>     Filter by task (+3)
-      --limit <n>       Max results (default: 3)
-    No filters: returns top N most recent notes.
+  pnotes brief --area <path> [--tag <tag>] [--task <task>] [--limit <n>]
+    Generate a Change Safety Brief from matched notes.
 
-pnotes show <id>
-    Print full content of note with given ID.
-    Example: pnotes show 2026-05-25-auth-fix
+  pnotes recall --area <path> [--tag <tag>] [--task <task>] [--limit <n>]
+    Return relevant note ids/paths/signals.
 
-pnotes guide
-    Print this help.
+  pnotes add continuity ...
+    Create a continuity note after implementation output.
 
-DECISION TREE
--------------
-→ Starting work on a task?
-    pnotes recall --task <slug>
+  pnotes show <id>
+    Print one full note.
 
-→ Starting work in a specific area?
-    pnotes recall --area <path>
+After implementation output:
+- Create a continuity note.
+- Include decisions, invariants, risks, tests, and missing_tests when applicable.
+- Do not use project notes as a changelog.
 
-→ Finishing a session?
-    pnotes add continuity --task <slug> --signal "<what happened>"
-
-→ Need to read a specific note?
-    pnotes show <id>
+Completion gate:
+- A task with implementation output is not complete until a continuity note is created or a valid skip reason is stated.
 "#
-    );
+}
+
+fn cmd_guide() {
+    println!("{}", guide_text());
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -1390,5 +1379,57 @@ areas:
         assert!(out.contains("RECENT CONTINUITY NOTES"));
         assert!(out.contains(".project-notes/notes/2026-05-26-test-recent.md"));
         assert!(out.contains("signal: My special signal message"));
+    }
+
+    #[test]
+    fn test_guide_content() {
+        let text = guide_text();
+        assert!(text.contains("pnotes brief"));
+        assert!(text.contains("pnotes recall"));
+        assert!(text.contains("Prefer"));
+        assert!(text.contains("fallback"));
+    }
+
+    #[test]
+    fn test_brief_applies_recency_boost_consistently() {
+        let mut note_old = make_fm("note-old", vec!["src/session-manager"], vec![], "old signal");
+        note_old.id = "note-old".to_string();
+        note_old.created_at = "2026-05-25".to_string();
+        note_old.decisions = vec!["Old decision".to_string()];
+
+        let mut note_new = make_fm("note-new", vec!["src/session-manager"], vec![], "new signal");
+        note_new.id = "note-new".to_string();
+        note_new.created_at = "2026-05-26".to_string();
+        note_new.decisions = vec!["New decision".to_string()];
+
+        let notes = vec![
+            (PathBuf::from("note-old.md"), note_old),
+            (PathBuf::from("note-new.md"), note_new),
+        ];
+
+        let out = build_brief(notes, vec!["src/session-manager".to_string()], vec![], None, 1);
+        assert!(out.contains("New decision"));
+        assert!(!out.contains("Old decision"));
+    }
+
+    #[test]
+    fn test_shared_scoring_and_filtering() {
+        let note_old = make_fm("note-old", vec!["src/session-manager"], vec![], "old");
+        let mut note_new = make_fm("note-new", vec!["src/session-manager"], vec![], "new");
+        note_new.created_at = "2026-05-26".to_string();
+
+        let notes = vec![
+            (PathBuf::from("note-old.md"), note_old),
+            (PathBuf::from("note-new.md"), note_new),
+        ];
+
+        let f = filter(vec!["src/session-manager"], vec![], None);
+        let scored = score_and_filter_notes(notes, &f);
+
+        assert_eq!(scored.len(), 2);
+        assert_eq!(scored[0].0, 6);
+        assert_eq!(scored[0].3.task, "note-new");
+        assert_eq!(scored[1].0, 5);
+        assert_eq!(scored[1].3.task, "note-old");
     }
 }
