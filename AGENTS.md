@@ -23,7 +23,7 @@ Before implementing:
 - No features beyond what was asked.
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
+- Avoid defensive programming for well-defined internal invariants, but ensure boundary and external failure handling.
 - If you write 200 lines and it could be 50, rewrite it.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
@@ -66,3 +66,67 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
+## Project Notes Completion Gate
+
+For any task with implementation output, project notes are mandatory.
+
+Implementation output includes changes to:
+
+- source code
+- tests
+- config
+- scripts
+- migrations
+- generated project files
+- project behavior
+
+Before starting implementation or broad source exploration, use project notes to recall relevant context:
+
+    ./bin/pnotes brief --area <path> --limit 5
+
+If `brief` is unavailable or returns no useful context, use:
+
+    ./bin/pnotes recall --area <path> --limit 5
+
+Before reporting a task as complete, the agent must do one of the following:
+
+1. Create a continuity note:
+
+       ./bin/pnotes add continuity ...
+
+2. Explicitly state why no note was needed.
+
+When a continuity note is created, inspect the generated file before final response.
+
+The note must be readable multiline Markdown and should include high-signal frontmatter when applicable:
+
+- `decisions`
+- `invariants`
+- `risks`
+- `tests`
+- `missing_tests`
+- `supersedes`
+
+Valid skip reasons:
+
+- no code/config/test/script/behavior changed
+- task was pure Q&A or read-only
+- repository has no `./bin/pnotes` or `.project-notes/`
+- user explicitly requested no note
+
+Invalid skip reasons:
+
+- task was small
+- change was simple
+- only a few lines changed
+- final summary already explains it
+- git diff is enough
+- generated note was created but not inspected
+
+Final response must include one line:
+
+    Project notes: created <path>
+
+or:
+
+    Project notes: skipped — <valid reason>
