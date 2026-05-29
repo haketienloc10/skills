@@ -1184,7 +1184,7 @@ Commands:
   pnotes recall --area <path> [--tag <tag>] [--task <task>] [--limit <n>]
     Return relevant note ids/paths/signals.
 
-  pnotes add continuity ...
+  pnotes add continuity {YYYY-MM-DD}-{task-slug}.md
     Create a continuity note after implementation output.
 
   pnotes show <id>

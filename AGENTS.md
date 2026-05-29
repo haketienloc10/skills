@@ -6,127 +6,119 @@
 - Prefer concise, operational Vietnamese.
 - Do not switch to English unless the user asks, the content is a verbatim quote, or keeping the original wording is technically important.
 
-## 1. Think Before Coding
+---
+
+## Coding Guidelines
+
+### 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
 
-## 2. Simplicity First
+* State your assumptions explicitly. If uncertain, ask.
+* If multiple interpretations exist, present them - don't pick silently.
+* If a simpler approach exists, say so. Push back when warranted.
+* If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
 
 **Minimum code that solves the problem. Nothing speculative.**
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- Avoid defensive programming for well-defined internal invariants, but ensure boundary and external failure handling.
-- If you write 200 lines and it could be 50, rewrite it.
+* No features beyond what was asked.
+* No abstractions for single-use code.
+* No "flexibility" or "configurability" that wasn't requested.
+* No error handling for impossible scenarios.
+* If you write 200 lines and it could be 50, rewrite it.
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+> **Self-Check:** "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## 3. Surgical Changes
+### 3. Surgical Changes
 
 **Touch only what you must. Clean up only your own mess.**
 
 When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
 
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
+* Don't "improve" adjacent code, comments, or formatting.
+* Don't refactor things that aren't broken.
+* Match existing style, even if you'd do it differently.
+* If you notice unrelated dead code, mention it - don't delete it.
+* Remove imports/variables/functions that YOUR changes made unused.
+* Don't remove pre-existing dead code unless asked.
 
-The test: Every changed line should trace directly to the user's request.
+> **The Test:** Every changed line in the diff should trace directly to the user's request.
 
-## 4. Goal-Driven Execution
+### 4. Goal-Driven Execution
 
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
+
+* **"Add validation"** → Write tests for invalid inputs, then make them pass.
+* **"Fix the bug"** → Write a test that reproduces it, then make it pass.
+* **"Refactor X"** → Ensure tests pass before and after.
 
 For multi-step tasks, state a brief plan:
-```
+
+```text
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
 3. [Step] → verify: [check]
+
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+> **Note:** Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+## Quy định: Ghi chú Dự án (Project Notes Completion Gate)
 
-## Project Notes Completion Gate
+### 1. Truy xuất Ngữ cảnh
 
-For any task with implementation output, project notes are mandatory.
+Bắt buộc chạy lệnh sau để nắm bắt thông tin dự án trước khi triển khai:
 
-Implementation output includes changes to:
+    ./bin/pnotes brief --area <path> --limit 10
 
-- source code
-- tests
-- config
-- scripts
-- migrations
-- generated project files
-- project behavior
+### 2. Tiêu chuẩn Hoàn thành Tác vụ
 
-Before starting implementation or broad source exploration, use project notes to recall relevant context:
+Trước khi đóng tác vụ, người thực hiện (Agent) **phải** hoàn thành một trong hai phương án sau:
 
-    ./bin/pnotes brief --area <path> --limit 5
+#### Lựa chọn A: Tạo Ghi chú Tiếp nối (Continuity Note)
 
-If `brief` is unavailable or returns no useful context, use:
+Thực thi lệnh:
 
-    ./bin/pnotes recall --area <path> --limit 5
+    ./bin/pnotes add continuity {YYYY-MM-DD}-{task-slug}.md
 
-Before reporting a task as complete, the agent must do one of the following:
+**Yêu cầu bắt buộc:**
 
-1. Create a continuity note:
+* Kiểm tra (inspect) tệp vừa tạo trước khi phản hồi cuối cùng.
+* Viết bằng định dạng Markdown nhiều dòng, rõ ràng.
+* Bổ sung siêu dữ liệu (frontmatter) phù hợp: `decisions`, `invariants`, `risks`, `tests`, `missing_tests`, `supersedes`.
 
-       ./bin/pnotes add continuity ...
+#### Lựa chọn B: Bỏ qua (Kèm lý do hợp lệ)
 
-2. Explicitly state why no note was needed.
+**Được phép bỏ qua (Hợp lệ):**
 
-When a continuity note is created, inspect the generated file before final response.
+* Không thay đổi code, config, test, script hay hành vi hệ thống.
+* Tác vụ chỉ là Hỏi & Đáp (Q&A) hoặc chỉ đọc (read-only).
+* Không tìm thấy `./bin/pnotes` hoặc `.project-notes/` trong kho lưu trữ.
+* Người dùng yêu cầu rõ ràng việc không tạo ghi chú.
 
-The note must be readable multiline Markdown and should include high-signal frontmatter when applicable:
+**Tuyệt đối không bỏ qua (Không hợp lệ):**
 
-- `decisions`
-- `invariants`
-- `risks`
-- `tests`
-- `missing_tests`
-- `supersedes`
+* Viện cớ tác vụ nhỏ, thay đổi đơn giản hoặc sửa ít dòng code.
+* Cho rằng phần tóm tắt hoặc git diff đã cung cấp đủ thông tin.
+* Đã chạy lệnh tạo ghi chú nhưng chưa kiểm tra (inspect) lại tệp.
 
-Valid skip reasons:
+### 3. Cú pháp Phản hồi Cuối cùng
 
-- no code/config/test/script/behavior changed
-- task was pure Q&A or read-only
-- repository has no `./bin/pnotes` or `.project-notes/`
-- user explicitly requested no note
+Đính kèm **duy nhất một dòng** ở cuối thông điệp phản hồi theo đúng cú pháp sau:
 
-Invalid skip reasons:
-
-- task was small
-- change was simple
-- only a few lines changed
-- final summary already explains it
-- git diff is enough
-- generated note was created but not inspected
-
-Final response must include one line:
+*Nếu đã tạo ghi chú:*
 
     Project notes: created <path>
 
-or:
+
+*Nếu bỏ qua (kèm lý do hợp lệ):*
 
     Project notes: skipped — <valid reason>
